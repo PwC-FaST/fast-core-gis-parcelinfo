@@ -1,0 +1,43 @@
+apiVersion: nuclio.io/v1beta1
+kind: Function
+metadata:
+  name: parcel-info-geojson2hydroinfo
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: geojson2hydroinfo
+spec:
+  alias: latest
+  description: Check proximity to water surfaces and water courses
+  handler: main:handler
+  image: eufast/parcel-info-geojson2hydroinfo:0.1.0
+  replicas: 2
+  maxReplicas: 5
+  targetCPU: 80
+  runtime: python:3.6
+  env:
+  - name: MONGODB_HOST
+    value: "mongodb.mongodb"
+  - name: MONGODB_PORT
+    value: "27017"
+  - name: MONGODB_DB
+    value: "fast"
+  - name: HYDRO_MONGODB_COLLECTION
+    value: "hydro"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi 
+  triggers:
+    http:
+      kind: http
+      maxWorkers: 10
+  version: -1
+status:
+  state: waitingForResourceConfiguration

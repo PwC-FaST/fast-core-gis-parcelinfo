@@ -1,0 +1,34 @@
+apiVersion: nuclio.io/v1beta1
+kind: Function
+metadata:
+  name: parcel-info-geojson2gisinfo
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: geojson2gisinfo
+spec:
+  alias: latest
+  description: Get general info of a GeoJSON feature
+  handler: main:handler
+  image: eufast/parcel-info-geojson2gisinfo:0.1.0
+  replicas: 2
+  maxReplicas: 5
+  targetCPU: 80
+  runtime: python:3.6
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi 
+  triggers:
+    http:
+      kind: http
+      maxWorkers: 10
+  version: -1
+status:
+  state: waitingForResourceConfiguration

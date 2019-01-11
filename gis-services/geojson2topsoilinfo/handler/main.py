@@ -1,0 +1,214 @@
+import os
+import math
+import json
+import threading
+import requests
+import traceback
+
+import numpy as np
+
+import geojson
+import pyproj
+import shapely_geojson
+
+from pymongo import MongoClient
+from shapely.geometry import shape
+from shapely.ops import transform
+from pyproj import Proj
+
+
+def handler(context, event):
+
+    b = event.body
+    if not isinstance(b, dict):
+        body = json.loads(b.decode('utf-8-sig'))
+    else:
+        body = b
+    
+    context.logger.info("Event received !")
+
+    try:
+
+        # if we're not ready to handle this request yet, deny it
+        if not FunctionState.done_loading:
+            context.logger.warn_with('Function not ready, denying request !')
+            raise NuclioResponseError(
+                'The service is loading and is temporarily unavailable.',requests.codes.unavailable)
+
+        # MongoDB infos
+        db = FunctionConfig.target_db
+        collection = FunctionConfig.topsoil_collection
+        client = FunctionState.mongodb_client
+
+        # MongoDB TOPSOIL collection
+        topsoil = client[db][collection]
+
+        # parse request's body
+        feature = Helpers.parse_body(context,body)
+
+        # get original CRS of the feature
+        props = feature['properties']
+        if not ('crs' in props or 'legal_crs' in props):
+            context.logger.warn_with('CRS of the feature not found in properties, please specify one !')
+            raise NuclioResponseError(
+                'CRS of the feature not found in properties, please specify one !',requests.codes.bad)
+        crs_attr = 'legal_crs' if 'legal_crs' in props else 'crs'
+        if 'type' in props[crs_attr] and props[crs_attr]['type'] == 'EPSG':
+            code = props[crs_attr]['properties']['code']
+            epsg_crs = "{0}:{1}".format(props[crs_attr]['type'],code)
+
+        # set the according reprojection lambda function
+        source = Proj(init=FunctionConfig.source_crs)
+        context.logger.info("Source CRS: {0}".format(FunctionConfig.source_crs))
+        target = Proj(init=epsg_crs)
+        context.logger.info("Target CRS: {0}".format(epsg_crs))
+        reproject = lambda x,y: pyproj.transform(source,target,x,y)
+
+        ## get colocated TOPSOIL data within a buffer of the requested feature
+        buf = math.degrees(FunctionConfig.topsoil_search_buffer/(6371 * 1000)) # in degree as we expected a EPSG:4326 CRS (WGS84)
+        search = shape(feature['geometry']).buffer(buf)
+
+        # get TOPSOIL data within the search buffer
+        geom = geojson.loads(shapely_geojson.dumps(search))
+        topsoil_data = list(topsoil.find({
+            "geometry": { 
+                "$geoWithin": { 
+                    "$geometry": geom
+                } 
+            } 
+        }, { "_id": 0 }))
+
+        # get reprojected topsoil points
+        tps = [
+            transform(reproject,shape(p['geometry']))
+            for p in topsoil_data
+        ]
+
+        # inject TOPSOIL properties
+        for i, v in enumerate(topsoil_data):
+            tps[i].value = v['properties']
+
+        # reproject the requested feature to original CRS
+        parcel = transform(reproject,shape(feature['geometry']))
+
+        topsoil = []
+        weights = []
+        props = FunctionConfig.topsoil_properties_for_avg
+        closest_sample_distance = -1
+        s1, s2 = 0, 0
+        # process a weighted value according to the distance between a TOPSOIL point and the parcel
+        for t in tps:
+            d = parcel.centroid.distance(t)
+            weights.append(1/d**2)
+            topsoil.append([float(t.value[p]) for p in props])
+            if d < closest_sample_distance or closest_sample_distance < 0:
+                closest_sample_distance = d
+        topsoil_avg = dict(zip(props,np.average(np.array(topsoil),axis=0,weights=weights)))
+
+        context.logger.info("'{0}' topsoil points processed".format(len(topsoil_data)))
+
+    except NuclioResponseError as error:
+        return error.as_response(context)
+
+    except Exception as error:
+        context.logger.warn_with('Unexpected error occurred, responding with internal server error',
+            exc=str(error))
+        message = 'Unexpected error occurred: {0}\n{1}'.format(error, traceback.format_exc())
+        return NuclioResponseError(message).as_response(context)
+
+    result = {
+        'topsoil': topsoil_avg,
+        'nbSamples': len(topsoil_data),
+        'closestSampleDistance': closest_sample_distance
+    }
+    return context.Response(body=json.dumps(result),
+                            headers={},
+                            content_type='application/json',
+                            status_code=requests.codes.ok)
+
+
+class FunctionConfig(object):
+
+    source_crs = 'EPSG:4326'
+
+    mongodb_host = None
+
+    mongodb_port = None
+
+    target_db = None
+
+    topsoil_collection = None
+
+    topsoil_search_buffer = None # in meters
+
+    topsoil_properties_for_avg = [
+        'coarse','clay','silt','sand','pHinH2O','pHinCaCl2','OC','CaCO3','N','P','K','CEC']
+
+
+class FunctionState(object):
+
+    mongodb_client = None
+
+    done_loading = False
+
+
+class Helpers(object):
+
+    @staticmethod
+    def load_configs():
+
+        FunctionConfig.mongodb_host = os.getenv('MONGODB_HOST','localhost')
+        FunctionConfig.mongodb_port = os.getenv('MONGODB_PORT',27017)
+        FunctionConfig.target_db = os.getenv('MONGODB_DB','fast')
+        FunctionConfig.topsoil_collection = os.getenv('TOPSOIL_MONGODB_COLLECTION')
+        FunctionConfig.topsoil_search_buffer = int(os.getenv('TOPSOIL_SEARCH_BUFFER',20000))
+
+    @staticmethod
+    def load_mongodb_client():
+
+        host = FunctionConfig.mongodb_host
+        port = FunctionConfig.mongodb_port
+        uri = "mongodb://{0}:{1}/".format(host,port)
+        FunctionState.mongodb_client = MongoClient(uri)
+
+    @staticmethod
+    def parse_body(context, body):
+
+        # check if it's a valid GeoJSON
+        try:
+            geodoc = geojson.loads(json.dumps(body))
+        except Exception as error:
+            context.logger.warn_with("The provided GeoJSON is not valid.")
+            raise NuclioResponseError(
+                "The provided GeoJSON is not valid.",requests.codes.bad)
+
+        if not (isinstance(geodoc,geojson.feature.Feature) and geodoc.is_valid):
+            context.logger.warn_with("The provided GeoJSON is not of type 'Feature'.")
+            raise NuclioResponseError(
+                "The provided GeoJSON is not of type 'Feature'.",requests.codes.bad)
+
+        return geodoc
+
+    @staticmethod
+    def on_import():
+
+        Helpers.load_configs()
+        Helpers.load_mongodb_client()
+        FunctionState.done_loading = True
+
+
+class NuclioResponseError(Exception):
+
+    def __init__(self, description, status_code=requests.codes.internal_server_error):
+        self._description = description
+        self._status_code = status_code
+
+    def as_response(self, context):
+        return context.Response(body=self._description,
+                                headers={},
+                                content_type='text/plain',
+                                status_code=self._status_code)
+
+
+t = threading.Thread(target=Helpers.on_import)
+t.start()

@@ -1,0 +1,114 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: parcel-info-360-gis
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: ws-360
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /gis
+spec:
+  rules:
+  - host: api.fast.sobloo.io
+    http:
+      paths:
+      - backend:
+          serviceName: parcel-info-360
+          servicePort: http
+        path: /v1/fast/gis/parcel/info/gis
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: parcel-info-360-soc
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: ws-360
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /soc
+spec:
+  rules:
+  - host: api.fast.sobloo.io
+    http:
+      paths:
+      - backend:
+          serviceName: parcel-info-360
+          servicePort: http
+        path: /v1/fast/gis/parcel/info/soc
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: parcel-info-360-hydro
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: ws-360
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /hydro
+spec:
+  rules:
+  - host: api.fast.sobloo.io
+    http:
+      paths:
+      - backend:
+          serviceName: parcel-info-360
+          servicePort: http
+        path: /v1/fast/gis/parcel/info/hydro
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: parcel-info-360-natura
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: ws-360
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /natura2000
+spec:
+  rules:
+  - host: api.fast.sobloo.io
+    http:
+      paths:
+      - backend:
+          serviceName: parcel-info-360
+          servicePort: http
+        path: /v1/fast/gis/parcel/info/natura2000
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: parcel-info-360-topsoil
+  namespace: fast-platform
+  labels:
+    platform: fast
+    module: core
+    domain: gis
+    api: parcel-info
+    app: ws-360
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /topsoil
+spec:
+  rules:
+  - host: api.fast.sobloo.io
+    http:
+      paths:
+      - backend:
+          serviceName: parcel-info-360
+          servicePort: http
+        path: /v1/fast/gis/parcel/info/topsoil
